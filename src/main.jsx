@@ -190,7 +190,7 @@ export default function App() {
   const [loggedInWorker, setLoggedInWorker] = useState(STORE.loggedInWorker);
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [dbError, setDbError] = useState("");
+  const [workerLoadError, setWorkerLoadError] = useState("");
 
   const reload = async () => {
     setLoading(true);
@@ -199,13 +199,14 @@ export default function App() {
     if (sResult.status === "fulfilled") setSites(sResult.value);
     if (rResult.status === "fulfilled") setRecords(rResult.value);
 
-    const failed = [wResult, sResult, rResult].filter((result) => result.status === "rejected");
-    failed.forEach((result) => console.error("reload error:", result.reason));
-    if (failed.length) {
-      setDbError("一部のデータを読み込めませんでした。Supabaseの接続設定または権限を確認してください。");
+    if (wResult.status === "rejected") {
+      console.error("workers reload error:", wResult.reason);
+      setWorkerLoadError("作業員マスタを読み込めませんでした。Supabaseのworkersテーブルの参照権限を確認してください。");
     } else {
-      setDbError("");
+      setWorkerLoadError("");
     }
+    if (sResult.status === "rejected") console.warn("sites reload error:", sResult.reason);
+    if (rResult.status === "rejected") console.warn("records reload error:", rResult.reason);
     setLoading(false);
     return {
       workers: wResult.status === "fulfilled" ? wResult.value : workers,
@@ -280,14 +281,14 @@ export default function App() {
   const handleLogout = () => { STORE.loggedInWorker = null; setLoggedInWorker(null); setMode("splash"); reload(); };
 
   if (loading && mode === "splash") return <div className="way-screen" style={{display:"flex",alignItems:"center",justifyContent:"center",fontFamily:FONT}}><div className="way-layer" style={{textAlign:"center",color:THEME.gold2,fontSize:14,fontWeight:700,letterSpacing:"0.08em"}}>読み込み中...</div><style>{CSS}</style></div>;
-  if (mode === "splash") return <SplashScreen onSelect={setMode} workers={workers} onLogin={handleLogin} onRefresh={reload} dbError={dbError} />;
-  if (mode === "settings") return <SettingsPage onBack={async () => { await reload(); setMode("splash"); }} workers={workers} sites={sites} onUpdateWorkers={syncWorkers} onUpdateSites={syncSites} dbError={dbError} />;
+  if (mode === "splash") return <SplashScreen onSelect={setMode} workers={workers} onLogin={handleLogin} onRefresh={reload} workerLoadError={workerLoadError} />;
+  if (mode === "settings") return <SettingsPage onBack={async () => { await reload(); setMode("splash"); }} workers={workers} sites={sites} onUpdateWorkers={syncWorkers} onUpdateSites={syncSites} />;
   if (mode === "worker") return <WorkerView onBack={handleLogout} onSubmit={addRecord} submitted={submitted} workerName={loggedInWorker} sites={sites} onGoAdmin={() => { reload(); setMode("admin"); }} />;
   return <AdminView onBack={() => setMode("splash")} records={records} workers={workers} sites={sites} onRefresh={reload} onBulkAdd={addBulkRecords} />;
 }
 
 // ─── Splash / Role Select ─────────────────────────────────────────
-function SplashScreen({ onSelect, workers, onLogin, onRefresh, dbError }) {
+function SplashScreen({ onSelect, workers, onLogin, onRefresh, workerLoadError }) {
   return (
     <div className="way-screen way-login-shell" style={{
       display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
@@ -311,12 +312,7 @@ function SplashScreen({ onSelect, workers, onLogin, onRefresh, dbError }) {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 12, width: "100%" }}>
-        {dbError && (
-          <div style={{ padding: "11px 14px", borderRadius: 8, background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.28)", color: "#fca5a5", fontSize: 12, lineHeight: 1.6, fontWeight: 700 }}>
-            {dbError}
-          </div>
-        )}
-        <WorkerLoginCard workers={workers} onLogin={onLogin} onRefresh={onRefresh} />
+        <WorkerLoginCard workers={workers} onLogin={onLogin} onRefresh={onRefresh} workerLoadError={workerLoadError} />
         <RoleCard icon={Icons.users} title="事務員" desc="記録一覧・集計ダッシュボード" color={THEME.blue} onClick={() => onSelect("admin")} delay="0.25s" />
         <RoleCard icon={Icons.settings} title="設定" desc="作業員・現場マスタ管理" color={THEME.gold} onClick={() => onSelect("settings")} delay="0.4s" />
         </div>
@@ -326,7 +322,7 @@ function SplashScreen({ onSelect, workers, onLogin, onRefresh, dbError }) {
   );
 }
 
-function WorkerLoginCard({ workers, onLogin, onRefresh }) {
+function WorkerLoginCard({ workers, onLogin, onRefresh, workerLoadError }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState("");
   const [hover, setHover] = useState(false);
@@ -395,7 +391,12 @@ function WorkerLoginCard({ workers, onLogin, onRefresh }) {
             作業員マスタを更新中...
           </div>
         )}
-        {!refreshing && workers.length === 0 && (
+        {!refreshing && workerLoadError && (
+          <div style={{ padding: "14px", borderRadius: 8, background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.28)", color: "#fca5a5", fontSize: 13, lineHeight: 1.6, fontWeight: 700 }}>
+            {workerLoadError}
+          </div>
+        )}
+        {!refreshing && !workerLoadError && workers.length === 0 && (
           <div style={{ padding: "14px", borderRadius: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", color: THEME.muted, fontSize: 13, lineHeight: 1.6 }}>
             作業員がまだ読み込まれていません。設定で登録後、下の更新ボタンを押してください。
           </div>
@@ -1035,7 +1036,7 @@ function CalendarTable({ records, allRecords, workers, filterMonth }) {
 }
 
 // ─── Settings Page ────────────────────────────────────────────────
-function SettingsPage({ onBack, workers, sites, onUpdateWorkers, onUpdateSites, dbError }) {
+function SettingsPage({ onBack, workers, sites, onUpdateWorkers, onUpdateSites }) {
   const mergeItem = (items, item) => [...new Set([...items, item])];
   const refreshWorkers = async () => {
     try { onUpdateWorkers(await DB.getWorkers()); } catch (error) { console.error("refresh workers error:", error); }
@@ -1062,11 +1063,6 @@ function SettingsPage({ onBack, workers, sites, onUpdateWorkers, onUpdateSites, 
             <div style={{ color: THEME.muted, fontSize: 12 }}>作業員や現場の追加・削除ができます</div>
           </div>
         </div>
-        {dbError && (
-          <div style={{ padding: "12px 14px", borderRadius: 8, background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.28)", color: "#fca5a5", fontSize: 13, lineHeight: 1.6, fontWeight: 700, marginBottom: 18 }}>
-            {dbError}
-          </div>
-        )}
         <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
           <MasterList title="作業員マスタ" items={workers} onAdd={async(n)=>{await DB.addWorker(n);onUpdateWorkers(mergeItem(workers,n));await refreshWorkers();}} onDelete={async(n)=>{await DB.delWorker(n);onUpdateWorkers(workers.filter(w=>w!==n));await refreshWorkers();}} color={THEME.gold2} placeholder="新しい作業員の名前" icon={Icons.user} />
           <MasterList title="現場マスタ" items={sites} onAdd={async(n)=>{await DB.addSite(n);onUpdateSites(mergeItem(sites,n));await refreshSites();}} onDelete={async(n)=>{await DB.delSite(n);onUpdateSites(sites.filter(s=>s!==n));await refreshSites();}} color={THEME.blue} placeholder="新しい現場名" icon={<Icon d={<><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></>} />} />

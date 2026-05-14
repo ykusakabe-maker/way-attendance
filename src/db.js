@@ -21,6 +21,15 @@ const cleanNames = (rows, keys) => {
     .filter(Boolean);
 };
 
+const selectNames = async (table, primaryColumn, fallbackColumn) => {
+  let result = await sb.from(table).select(primaryColumn).order('id');
+  if (result.error && fallbackColumn && result.error.code === 'PGRST204') {
+    result = await sb.from(table).select(fallbackColumn).order('id');
+  }
+  throwIfError(result.error);
+  return cleanNames(result.data, [primaryColumn, fallbackColumn]);
+};
+
 const insertWithFallback = async (table, primaryColumn, fallbackColumn, value) => {
   let result = await sb.from(table).insert({ [primaryColumn]: value });
   if (result.error && fallbackColumn && result.error.code === 'PGRST204') {
@@ -38,16 +47,8 @@ const deleteWithFallback = async (table, primaryColumn, fallbackColumn, value) =
 };
 
 export const DB = {
-  getWorkers: async () => {
-    const { data, error } = await sb.from('workers').select('*');
-    throwIfError(error);
-    return cleanNames(data, ['name', 'worker_name']);
-  },
-  getSites: async () => {
-    const { data, error } = await sb.from('sites').select('*');
-    throwIfError(error);
-    return cleanNames(data, ['name', 'site_name']);
-  },
+  getWorkers: async () => selectNames('workers', 'name', 'worker_name'),
+  getSites: async () => selectNames('sites', 'name', 'site_name'),
   getRecords: async () => {
     const { data, error } = await sb.from('records').select('*').order('date', { ascending: false });
     throwIfError(error);
