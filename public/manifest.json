@@ -1,8 +1,8 @@
 {
-  "name": "出勤管理【友生工業】",
-  "short_name": "出勤管理",
+  "name": "WAY合同会社 出勤管理システム",
+  "short_name": "WAY出勤管理",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f0f4f8",
-  "theme_color": "#e99625"
+  "background_color": "#071525",
+  "theme_color": "#d8aa4a"
 }
