@@ -1,0 +1,8 @@
+{
+  "name": "出勤管理【友生工業】",
+  "short_name": "出勤管理",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f0f4f8",
+  "theme_color": "#e99625"
+}
