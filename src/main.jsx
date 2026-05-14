@@ -190,12 +190,28 @@ export default function App() {
   const [loggedInWorker, setLoggedInWorker] = useState(STORE.loggedInWorker);
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [dbError, setDbError] = useState("");
 
   const reload = async () => {
     setLoading(true);
-    const [w, s, r] = await Promise.all([DB.getWorkers(), DB.getSites(), DB.getRecords()]);
-    setWorkers(w); setSites(s); setRecords(r);
+    const [wResult, sResult, rResult] = await Promise.allSettled([DB.getWorkers(), DB.getSites(), DB.getRecords()]);
+    if (wResult.status === "fulfilled") setWorkers(wResult.value);
+    if (sResult.status === "fulfilled") setSites(sResult.value);
+    if (rResult.status === "fulfilled") setRecords(rResult.value);
+
+    const failed = [wResult, sResult, rResult].filter((result) => result.status === "rejected");
+    failed.forEach((result) => console.error("reload error:", result.reason));
+    if (failed.length) {
+      setDbError("一部のデータを読み込めませんでした。Supabaseの接続設定または権限を確認してください。");
+    } else {
+      setDbError("");
+    }
     setLoading(false);
+    return {
+      workers: wResult.status === "fulfilled" ? wResult.value : workers,
+      sites: sResult.status === "fulfilled" ? sResult.value : sites,
+      records: rResult.status === "fulfilled" ? rResult.value : records,
+    };
   };
   useEffect(() => { reload(); }, []);
 
@@ -264,14 +280,14 @@ export default function App() {
   const handleLogout = () => { STORE.loggedInWorker = null; setLoggedInWorker(null); setMode("splash"); reload(); };
 
   if (loading && mode === "splash") return <div className="way-screen" style={{display:"flex",alignItems:"center",justifyContent:"center",fontFamily:FONT}}><div className="way-layer" style={{textAlign:"center",color:THEME.gold2,fontSize:14,fontWeight:700,letterSpacing:"0.08em"}}>読み込み中...</div><style>{CSS}</style></div>;
-  if (mode === "splash") return <SplashScreen onSelect={setMode} workers={workers} onLogin={handleLogin} />;
-  if (mode === "settings") return <SettingsPage onBack={() => { reload(); setMode("splash"); }} workers={workers} sites={sites} onUpdateWorkers={syncWorkers} onUpdateSites={syncSites} />;
+  if (mode === "splash") return <SplashScreen onSelect={setMode} workers={workers} onLogin={handleLogin} onRefresh={reload} dbError={dbError} />;
+  if (mode === "settings") return <SettingsPage onBack={async () => { await reload(); setMode("splash"); }} workers={workers} sites={sites} onUpdateWorkers={syncWorkers} onUpdateSites={syncSites} dbError={dbError} />;
   if (mode === "worker") return <WorkerView onBack={handleLogout} onSubmit={addRecord} submitted={submitted} workerName={loggedInWorker} sites={sites} onGoAdmin={() => { reload(); setMode("admin"); }} />;
   return <AdminView onBack={() => setMode("splash")} records={records} workers={workers} sites={sites} onRefresh={reload} onBulkAdd={addBulkRecords} />;
 }
 
 // ─── Splash / Role Select ─────────────────────────────────────────
-function SplashScreen({ onSelect, workers, onLogin }) {
+function SplashScreen({ onSelect, workers, onLogin, onRefresh, dbError }) {
   return (
     <div className="way-screen way-login-shell" style={{
       display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
@@ -295,7 +311,12 @@ function SplashScreen({ onSelect, workers, onLogin }) {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 12, width: "100%" }}>
-        <WorkerLoginCard workers={workers} onLogin={onLogin} />
+        {dbError && (
+          <div style={{ padding: "11px 14px", borderRadius: 8, background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.28)", color: "#fca5a5", fontSize: 12, lineHeight: 1.6, fontWeight: 700 }}>
+            {dbError}
+          </div>
+        )}
+        <WorkerLoginCard workers={workers} onLogin={onLogin} onRefresh={onRefresh} />
         <RoleCard icon={Icons.users} title="事務員" desc="記録一覧・集計ダッシュボード" color={THEME.blue} onClick={() => onSelect("admin")} delay="0.25s" />
         <RoleCard icon={Icons.settings} title="設定" desc="作業員・現場マスタ管理" color={THEME.gold} onClick={() => onSelect("settings")} delay="0.4s" />
         </div>
@@ -305,14 +326,29 @@ function SplashScreen({ onSelect, workers, onLogin }) {
   );
 }
 
-function WorkerLoginCard({ workers, onLogin }) {
+function WorkerLoginCard({ workers, onLogin, onRefresh }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState("");
   const [hover, setHover] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    if (selected && !workers.includes(selected)) setSelected("");
+  }, [selected, workers]);
+
+  const refreshWorkers = async () => {
+    if (!onRefresh) return;
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      <button onClick={() => { setOpen(true); refreshWorkers(); }} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
         style={{
           display: "flex", alignItems: "center", gap: 16, padding: "20px 22px",
           background: hover ? "rgba(216,170,74,0.12)" : "rgba(7,21,37,0.78)",
@@ -354,6 +390,16 @@ function WorkerLoginCard({ workers, onLogin }) {
       </div>
 
       <div className="way-scroll" style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 240, overflowY: "auto", marginBottom: 16 }}>
+        {refreshing && (
+          <div style={{ padding: "14px", borderRadius: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", color: THEME.gold2, fontSize: 13, fontWeight: 700, textAlign: "center" }}>
+            作業員マスタを更新中...
+          </div>
+        )}
+        {!refreshing && workers.length === 0 && (
+          <div style={{ padding: "14px", borderRadius: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", color: THEME.muted, fontSize: 13, lineHeight: 1.6 }}>
+            作業員がまだ読み込まれていません。設定で登録後、下の更新ボタンを押してください。
+          </div>
+        )}
         {workers.map((w) => (
           <button key={w} onClick={() => setSelected(w)} style={{
             display: "flex", alignItems: "center", gap: 12, padding: "12px 16px",
@@ -381,11 +427,17 @@ function WorkerLoginCard({ workers, onLogin }) {
           flex: 1, padding: "13px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.10)",
           background: "rgba(255,255,255,0.04)", color: THEME.textSoft, cursor: "pointer", fontSize: 14, fontWeight: 700, fontFamily: FONT,
         }}>戻る</button>
-        <button onClick={() => selected && onLogin(selected)} disabled={!selected} style={{
-          flex: 2, padding: "13px", borderRadius: 8, border: "none", cursor: selected ? "pointer" : "not-allowed",
-          background: selected ? `linear-gradient(135deg, ${THEME.gold2}, ${THEME.gold})` : "rgba(255,255,255,0.08)",
+        {!selected && (
+          <button onClick={refreshWorkers} disabled={refreshing} style={{
+            flex: 1.2, padding: "13px", borderRadius: 8, border: `1px solid ${THEME.line}`,
+            background: "rgba(216,170,74,0.10)", color: THEME.gold2, cursor: refreshing ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 800, fontFamily: FONT,
+          }}>更新</button>
+        )}
+        <button onClick={() => selected && onLogin(selected)} disabled={!selected || refreshing} style={{
+          flex: 2, padding: "13px", borderRadius: 8, border: "none", cursor: selected && !refreshing ? "pointer" : "not-allowed",
+          background: selected && !refreshing ? `linear-gradient(135deg, ${THEME.gold2}, ${THEME.gold})` : "rgba(255,255,255,0.08)",
           color: selected ? "#08111d" : THEME.muted2, fontSize: 14, fontWeight: 800, fontFamily: FONT,
-          boxShadow: selected ? "0 10px 28px rgba(216,170,74,0.25)" : "none",
+          boxShadow: selected && !refreshing ? "0 10px 28px rgba(216,170,74,0.25)" : "none",
         }}>ログイン</button>
       </div>
     </div>
@@ -983,7 +1035,15 @@ function CalendarTable({ records, allRecords, workers, filterMonth }) {
 }
 
 // ─── Settings Page ────────────────────────────────────────────────
-function SettingsPage({ onBack, workers, sites, onUpdateWorkers, onUpdateSites }) {
+function SettingsPage({ onBack, workers, sites, onUpdateWorkers, onUpdateSites, dbError }) {
+  const mergeItem = (items, item) => [...new Set([...items, item])];
+  const refreshWorkers = async () => {
+    try { onUpdateWorkers(await DB.getWorkers()); } catch (error) { console.error("refresh workers error:", error); }
+  };
+  const refreshSites = async () => {
+    try { onUpdateSites(await DB.getSites()); } catch (error) { console.error("refresh sites error:", error); }
+  };
+
   return (
     <div className="way-screen" style={{ fontFamily: FONT }}>
       <div className="way-layer" style={{ background: "rgba(4,11,20,0.84)", borderBottom: `1px solid ${THEME.line}`, padding: "13px 20px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 10, backdropFilter: "blur(20px)" }}>
@@ -1002,9 +1062,14 @@ function SettingsPage({ onBack, workers, sites, onUpdateWorkers, onUpdateSites }
             <div style={{ color: THEME.muted, fontSize: 12 }}>作業員や現場の追加・削除ができます</div>
           </div>
         </div>
+        {dbError && (
+          <div style={{ padding: "12px 14px", borderRadius: 8, background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.28)", color: "#fca5a5", fontSize: 13, lineHeight: 1.6, fontWeight: 700, marginBottom: 18 }}>
+            {dbError}
+          </div>
+        )}
         <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
-          <MasterList title="作業員マスタ" items={workers} onAdd={async(n)=>{await DB.addWorker(n);onUpdateWorkers(await DB.getWorkers());}} onDelete={async(n)=>{await DB.delWorker(n);onUpdateWorkers(await DB.getWorkers());}} color={THEME.gold2} placeholder="新しい作業員の名前" icon={Icons.user} />
-          <MasterList title="現場マスタ" items={sites} onAdd={async(n)=>{await DB.addSite(n);onUpdateSites(await DB.getSites());}} onDelete={async(n)=>{await DB.delSite(n);onUpdateSites(await DB.getSites());}} color={THEME.blue} placeholder="新しい現場名" icon={<Icon d={<><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></>} />} />
+          <MasterList title="作業員マスタ" items={workers} onAdd={async(n)=>{await DB.addWorker(n);onUpdateWorkers(mergeItem(workers,n));await refreshWorkers();}} onDelete={async(n)=>{await DB.delWorker(n);onUpdateWorkers(workers.filter(w=>w!==n));await refreshWorkers();}} color={THEME.gold2} placeholder="新しい作業員の名前" icon={Icons.user} />
+          <MasterList title="現場マスタ" items={sites} onAdd={async(n)=>{await DB.addSite(n);onUpdateSites(mergeItem(sites,n));await refreshSites();}} onDelete={async(n)=>{await DB.delSite(n);onUpdateSites(sites.filter(s=>s!==n));await refreshSites();}} color={THEME.blue} placeholder="新しい現場名" icon={<Icon d={<><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></>} />} />
         </div>
       </div>
       <style>{CSS}</style>
@@ -1015,18 +1080,38 @@ function SettingsPage({ onBack, workers, sites, onUpdateWorkers, onUpdateSites }
 function MasterList({ title, items, onAdd, onDelete, color, placeholder, icon }) {
   const [newItem, setNewItem] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
   const handleAdd = async () => {
     const trimmed = newItem.trim();
     if (!trimmed || items.includes(trimmed)) return;
-    await onAdd(trimmed);
-    setNewItem("");
+    setSaving(true);
+    setError("");
+    try {
+      await onAdd(trimmed);
+      setNewItem("");
+    } catch (err) {
+      console.error("master add error:", err);
+      setError("登録に失敗しました。Supabaseのテーブル名・列名・権限を確認してください。");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDelete = async (item) => {
     if (confirmDelete === item) {
-      await onDelete(item);
-      setConfirmDelete(null);
+      setSaving(true);
+      setError("");
+      try {
+        await onDelete(item);
+        setConfirmDelete(null);
+      } catch (err) {
+        console.error("master delete error:", err);
+        setError("削除に失敗しました。Supabaseの権限を確認してください。");
+      } finally {
+        setSaving(false);
+      }
     } else {
       setConfirmDelete(item);
       setTimeout(() => setConfirmDelete(null), 3000);
@@ -1045,22 +1130,27 @@ function MasterList({ title, items, onAdd, onDelete, color, placeholder, icon })
         <span style={{ marginLeft: 8, padding: "3px 10px", borderRadius: 8, background: `${color}18`, color, fontSize: 12, fontWeight: 700 }}>{items.length}件</span>
       </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        <input type="text" value={newItem} onChange={(e) => setNewItem(e.target.value)} placeholder={placeholder} onKeyDown={(e) => e.key === "Enter" && handleAdd()} style={{ ...inputBase, flex: 1, padding: "12px 14px", fontSize: 14, borderRadius: 10 }} />
-        <button onClick={handleAdd} disabled={!newItem.trim()} style={{
+        <input type="text" value={newItem} onChange={(e) => { setNewItem(e.target.value); setError(""); }} placeholder={placeholder} onKeyDown={(e) => e.key === "Enter" && handleAdd()} style={{ ...inputBase, flex: 1, padding: "12px 14px", fontSize: 14, borderRadius: 10 }} />
+        <button onClick={handleAdd} disabled={!newItem.trim() || saving} style={{
           display: "flex", alignItems: "center", gap: 6, padding: "12px 18px", borderRadius: 8,
-          border: "none", cursor: newItem.trim() ? "pointer" : "not-allowed", fontFamily: FONT,
-          background: newItem.trim() ? color : "rgba(255,255,255,0.08)", color: newItem.trim() ? "#071525" : THEME.muted2,
+          border: "none", cursor: newItem.trim() && !saving ? "pointer" : "not-allowed", fontFamily: FONT,
+          background: newItem.trim() && !saving ? color : "rgba(255,255,255,0.08)", color: newItem.trim() && !saving ? "#071525" : THEME.muted2,
           fontSize: 14, fontWeight: 800, transition: "all 0.2s", whiteSpace: "nowrap",
-        }}>{Icons.plus} 追加</button>
+        }}>{Icons.plus} {saving ? "登録中" : "追加"}</button>
       </div>
+      {error && (
+        <div style={{ padding: "10px 12px", borderRadius: 8, background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.28)", color: "#fca5a5", fontSize: 12, lineHeight: 1.6, fontWeight: 700, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {items.map((item, i) => (
           <div key={item} style={{ display: "flex", alignItems: "center", padding: "10px 14px", borderRadius: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", animation: `fadeIn 0.2s ease-out` }}>
             <span style={{ width: 28, height: 28, borderRadius: 7, marginRight: 12, background: `${color}18`, color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, flexShrink: 0 }}>{i + 1}</span>
             <span style={{ color: THEME.textSoft, fontSize: 14, flex: 1 }}>{item}</span>
-            <button onClick={() => handleDelete(item)} style={{
+            <button onClick={() => handleDelete(item)} disabled={saving} style={{
               display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", borderRadius: 7,
-              border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: FONT, transition: "all 0.2s",
+              border: "none", cursor: saving ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 600, fontFamily: FONT, transition: "all 0.2s",
               background: confirmDelete === item ? "rgba(239,68,68,0.18)" : "rgba(255,255,255,0.05)", color: confirmDelete === item ? "#fca5a5" : THEME.muted,
             }}>{Icons.trash}{confirmDelete === item ? "確認" : "削除"}</button>
           </div>
