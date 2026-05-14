@@ -77,6 +77,21 @@ const THEME = {
   blue: "#5fb3e6",
 };
 
+const formatDbError = (prefix, error) => {
+  const message = error?.message || error?.details || error?.hint || "";
+  const code = error?.code ? ` / ${error.code}` : "";
+  if (/row-level security|permission denied|42501/i.test(message + code)) {
+    return `${prefix} SupabaseのRLS/権限で拒否されています。workersテーブルにSELECT/INSERT許可を追加してください。${code}`;
+  }
+  if (/invalid api key|jwt|apikey/i.test(message)) {
+    return `${prefix} SupabaseのAPIキー設定を確認してください。`;
+  }
+  if (/failed to fetch|network|invalid url|supabaseurl|your_url/i.test(message)) {
+    return `${prefix} SupabaseのURLまたはVercel環境変数を確認してください。`;
+  }
+  return message ? `${prefix} ${message}${code}` : prefix;
+};
+
 const inputBase = {
   width: "100%", padding: "15px 16px", borderRadius: 8, fontSize: 15,
   background: "rgba(7, 21, 37, 0.88)", border: `1.5px solid ${THEME.line}`,
@@ -192,8 +207,21 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [workerLoadError, setWorkerLoadError] = useState("");
 
-  const reload = async () => {
-    setLoading(true);
+  const loadWorkers = async () => {
+    try {
+      const nextWorkers = await DB.getWorkers();
+      setWorkers(nextWorkers);
+      setWorkerLoadError("");
+      return nextWorkers;
+    } catch (error) {
+      console.error("workers reload error:", error);
+      setWorkerLoadError(formatDbError("作業員マスタを読み込めませんでした。", error));
+      return null;
+    }
+  };
+
+  const reload = async ({ showLoading = false } = {}) => {
+    if (showLoading) setLoading(true);
     const [wResult, sResult, rResult] = await Promise.allSettled([DB.getWorkers(), DB.getSites(), DB.getRecords()]);
     if (wResult.status === "fulfilled") setWorkers(wResult.value);
     if (sResult.status === "fulfilled") setSites(sResult.value);
@@ -201,20 +229,20 @@ export default function App() {
 
     if (wResult.status === "rejected") {
       console.error("workers reload error:", wResult.reason);
-      setWorkerLoadError("作業員マスタを読み込めませんでした。Supabaseのworkersテーブルの参照権限を確認してください。");
+      setWorkerLoadError(formatDbError("作業員マスタを読み込めませんでした。", wResult.reason));
     } else {
       setWorkerLoadError("");
     }
     if (sResult.status === "rejected") console.warn("sites reload error:", sResult.reason);
     if (rResult.status === "rejected") console.warn("records reload error:", rResult.reason);
-    setLoading(false);
+    if (showLoading) setLoading(false);
     return {
       workers: wResult.status === "fulfilled" ? wResult.value : workers,
       sites: sResult.status === "fulfilled" ? sResult.value : sites,
       records: rResult.status === "fulfilled" ? rResult.value : records,
     };
   };
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { reload({ showLoading: true }); }, []);
 
   const syncWorkers = async (w) => { setWorkers(w); };
   const syncSites = async (s) => { setSites(s); };
@@ -281,7 +309,7 @@ export default function App() {
   const handleLogout = () => { STORE.loggedInWorker = null; setLoggedInWorker(null); setMode("splash"); reload(); };
 
   if (loading && mode === "splash") return <div className="way-screen" style={{display:"flex",alignItems:"center",justifyContent:"center",fontFamily:FONT}}><div className="way-layer" style={{textAlign:"center",color:THEME.gold2,fontSize:14,fontWeight:700,letterSpacing:"0.08em"}}>読み込み中...</div><style>{CSS}</style></div>;
-  if (mode === "splash") return <SplashScreen onSelect={setMode} workers={workers} onLogin={handleLogin} onRefresh={reload} workerLoadError={workerLoadError} />;
+  if (mode === "splash") return <SplashScreen onSelect={setMode} workers={workers} onLogin={handleLogin} onRefresh={loadWorkers} workerLoadError={workerLoadError} />;
   if (mode === "settings") return <SettingsPage onBack={async () => { await reload(); setMode("splash"); }} workers={workers} sites={sites} onUpdateWorkers={syncWorkers} onUpdateSites={syncSites} />;
   if (mode === "worker") return <WorkerView onBack={handleLogout} onSubmit={addRecord} submitted={submitted} workerName={loggedInWorker} sites={sites} onGoAdmin={() => { reload(); setMode("admin"); }} />;
   return <AdminView onBack={() => setMode("splash")} records={records} workers={workers} sites={sites} onRefresh={reload} onBulkAdd={addBulkRecords} />;
@@ -1089,7 +1117,7 @@ function MasterList({ title, items, onAdd, onDelete, color, placeholder, icon })
       setNewItem("");
     } catch (err) {
       console.error("master add error:", err);
-      setError("登録に失敗しました。Supabaseのテーブル名・列名・権限を確認してください。");
+      setError(formatDbError("登録に失敗しました。", err));
     } finally {
       setSaving(false);
     }
@@ -1104,7 +1132,7 @@ function MasterList({ title, items, onAdd, onDelete, color, placeholder, icon })
         setConfirmDelete(null);
       } catch (err) {
         console.error("master delete error:", err);
-        setError("削除に失敗しました。Supabaseの権限を確認してください。");
+        setError(formatDbError("削除に失敗しました。", err));
       } finally {
         setSaving(false);
       }

@@ -21,9 +21,17 @@ const cleanNames = (rows, keys) => {
     .filter(Boolean);
 };
 
+const isMissingColumnError = (error, column) => {
+  const text = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+  return error?.code === 'PGRST204'
+    || error?.code === '42703'
+    || (text.includes('schema cache') && text.includes(column.toLowerCase()))
+    || (text.includes('column') && text.includes(column.toLowerCase()));
+};
+
 const selectNames = async (table, primaryColumn, fallbackColumn) => {
   let result = await sb.from(table).select(primaryColumn).order('id');
-  if (result.error && fallbackColumn && result.error.code === 'PGRST204') {
+  if (result.error && fallbackColumn && isMissingColumnError(result.error, primaryColumn)) {
     result = await sb.from(table).select(fallbackColumn).order('id');
   }
   throwIfError(result.error);
@@ -32,7 +40,7 @@ const selectNames = async (table, primaryColumn, fallbackColumn) => {
 
 const insertWithFallback = async (table, primaryColumn, fallbackColumn, value) => {
   let result = await sb.from(table).insert({ [primaryColumn]: value });
-  if (result.error && fallbackColumn && result.error.code === 'PGRST204') {
+  if (result.error && fallbackColumn && isMissingColumnError(result.error, primaryColumn)) {
     result = await sb.from(table).insert({ [fallbackColumn]: value });
   }
   throwIfError(result.error);
@@ -40,7 +48,7 @@ const insertWithFallback = async (table, primaryColumn, fallbackColumn, value) =
 
 const deleteWithFallback = async (table, primaryColumn, fallbackColumn, value) => {
   let result = await sb.from(table).delete().eq(primaryColumn, value);
-  if (result.error && fallbackColumn && result.error.code === 'PGRST204') {
+  if (result.error && fallbackColumn && isMissingColumnError(result.error, primaryColumn)) {
     result = await sb.from(table).delete().eq(fallbackColumn, value);
   }
   throwIfError(result.error);
