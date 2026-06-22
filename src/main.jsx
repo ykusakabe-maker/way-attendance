@@ -954,6 +954,7 @@ function CalendarTable({ records, allRecords, workers, filterMonth }) {
   const dl = ["日","月","火","水","木","金","土"];
 
   const lk = {};
+  const ot = {};
   records.forEach(r => {
     const d = parseInt(r.date.split("-")[2]);
     const wn = r.worker_name || r.name;
@@ -962,6 +963,11 @@ function CalendarTable({ records, allRecords, workers, filterMonth }) {
       lk[wn][d] = r.quantity;
     } else {
       lk[wn][d] = (lk[wn][d] || 0) + r.quantity;
+    }
+    const otv = Number(r.overtime) || 0;
+    if (otv > 0) {
+      if (!ot[wn]) ot[wn] = {};
+      ot[wn][d] = (ot[wn][d] || 0) + otv;
     }
   });
   const active = workers.filter(w => lk[w]);
@@ -999,6 +1005,7 @@ function CalendarTable({ records, allRecords, workers, filterMonth }) {
           <span><span style={{ color: "#6b7280", fontWeight: 700 }}>休</span> 休日</span>
           <span><span style={{ color: "#0ea5e9", fontWeight: 700 }}>⭐</span> 打合せ</span>
           <span><span style={{ color: "#1e40af", fontWeight: 700 }}>夜</span> 夜勤</span>
+          <span><span style={{ color: "#f59e0b", fontWeight: 700 }}>残◯</span> 残業(h)</span>
           <span><span style={{ color: "#ef4444", fontWeight: 700 }}>未</span> 未入力</span>
         </span>
       </div>
@@ -1040,6 +1047,7 @@ function CalendarTable({ records, allRecords, workers, filterMonth }) {
                   {days.map(d => {
                     const val = dm[d]; const w = getDow(d); const hol = w === 0 || w === 6;
                     const hasRecord = d in dm;
+                    const otVal = (ot[name] || {})[d] || 0;
                     let sym = "", clr = "#e5e7eb", fs = 14;
                     if (val === -2) { sym = "休"; clr = "#6b7280"; fs = 11; }
                     else if (val === -1) { sym = "雨"; clr = "#8b5cf6"; fs = 11; }
@@ -1051,7 +1059,17 @@ function CalendarTable({ records, allRecords, workers, filterMonth }) {
                     else if (val === 0.5) { sym = "△"; clr = "#f59e0b"; }
                     else if (hasRecord && val === 0) { sym = "✕"; clr = "#ef4444"; }
                     else if (isPast(d) && !hol && d >= firstDay) { sym = "未"; clr = "#ef4444"; fs = 11; }
-                    return <td key={d} style={{ ...cdBase, textAlign: "center", fontWeight: 800, fontSize: fs, color: clr, background: hol ? "rgba(255,255,255,0.035)" : "transparent" }}>{sym}</td>;
+                    const otLabel = otVal % 1 === 0 ? otVal : otVal.toFixed(1);
+                    return (
+                      <td key={d} style={{ ...cdBase, textAlign: "center", background: hol ? "rgba(255,255,255,0.035)" : "transparent", padding: "6px 4px" }}>
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1 }}>
+                          <span style={{ fontWeight: 800, fontSize: fs, color: clr }}>{sym}</span>
+                          {otVal > 0 && (
+                            <span style={{ marginTop: 2, fontSize: 9, fontWeight: 800, color: "#f59e0b", lineHeight: 1, whiteSpace: "nowrap" }}>残{otLabel}</span>
+                          )}
+                        </div>
+                      </td>
+                    );
                   })}
                   <td style={{ ...cdBase, textAlign: "center", fontWeight: 800, fontSize: 14, color: THEME.gold2 }}>{tot}</td>
                 </tr>
