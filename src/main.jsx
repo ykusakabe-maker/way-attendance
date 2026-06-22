@@ -1059,8 +1059,11 @@ function CalendarTable({ records, allRecords, workers, filterMonth }) {
                     else if (val === 0.5) { sym = "△"; clr = "#f59e0b"; }
                     else if (hasRecord && val === 0) { sym = "✕"; clr = "#ef4444"; }
                     else if (isPast(d) && !hol && d >= firstDay) { sym = "未"; clr = "#ef4444"; fs = 11; }
-                    // 残業があった日は「残」で表示（出勤を兼ねる）
-                    if (otVal > 0) { sym = "残"; clr = "#ec4899"; fs = 13; }
+                    // 残業があった日は「残＋時間」で表示（◯は出さず残業を優先表示）
+                    if (otVal > 0) {
+                      const otLabel = otVal % 1 === 0 ? otVal : otVal.toFixed(1);
+                      sym = "残" + otLabel; clr = "#ec4899"; fs = 11;
+                    }
                     return <td key={d} style={{ ...cdBase, textAlign: "center", fontWeight: 800, fontSize: fs, color: clr, background: hol ? "rgba(255,255,255,0.035)" : "transparent" }}>{sym}</td>;
                   })}
                   <td style={{ ...cdBase, textAlign: "center", fontWeight: 800, fontSize: 14, color: THEME.gold2 }}>{tot}</td>
