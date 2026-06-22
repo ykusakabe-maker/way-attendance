@@ -66,9 +66,24 @@ export const DB = {
   delWorker: async (name) => { await deleteWithFallback('workers', 'name', 'worker_name', name); },
   addSite: async (name) => { await insertWithFallback('sites', 'name', 'site_name', name); },
   delSite: async (name) => { await deleteWithFallback('sites', 'name', 'site_name', name); },
-  addRecord: async (r) => { const { error } = await sb.from('records').insert(r); throwIfError(error); },
+  addRecord: async (r) => {
+    let { error } = await sb.from('records').insert(r);
+    // overtime列が未追加でも落ちないようにフォールバック
+    if (error && 'overtime' in r && isMissingColumnError(error, 'overtime')) {
+      const { overtime, ...rest } = r;
+      ({ error } = await sb.from('records').insert(rest));
+    }
+    throwIfError(error);
+  },
   delRecord: async (id) => { const { error } = await sb.from('records').delete().eq('id', id); throwIfError(error); },
-  updateRecord: async (id, updates) => { const { error } = await sb.from('records').update(updates).eq('id', id); throwIfError(error); },
+  updateRecord: async (id, updates) => {
+    let { error } = await sb.from('records').update(updates).eq('id', id);
+    if (error && 'overtime' in updates && isMissingColumnError(error, 'overtime')) {
+      const { overtime, ...rest } = updates;
+      ({ error } = await sb.from('records').update(rest).eq('id', id));
+    }
+    throwIfError(error);
+  },
   checkDuplicate: async (workerName, date) => {
     const { data, error } = await sb.from('records').select('id').eq('worker_name', workerName).eq('date', date);
     throwIfError(error);

@@ -258,12 +258,14 @@ export default function App() {
       : rec.quantity === -5 ? "打合せ"
       : rec.quantity === -6 ? "夜勤"
       : "";
+    const isWorkQty = rec.quantity > 0 || rec.quantity === -6;
     await DB.addRecord({
       worker_name: rec.name, date: rec.date,
       site_name: (rec.quantity < 0 && rec.quantity !== -5 && rec.quantity !== -6) ? (rec.site || label) : rec.site,
       quantity: rec.quantity,
       content: (rec.quantity < 0 && rec.quantity !== -5 && rec.quantity !== -6) ? (rec.content || label) : rec.content,
       distance: Number(rec.distance) || 0,
+      overtime: isWorkQty ? (Number(rec.overtime) || 0) : 0,
       note: rec.note || "",
     });
     setSubmitted(true);
@@ -500,7 +502,7 @@ function RoleCard({ icon, title, desc, color, onClick, delay }) {
 
 // ─── Worker View ──────────────────────────────────────────────────
 function WorkerView({ onBack, onSubmit, submitted, workerName, sites, onGoAdmin }) {
-  const [form, setForm] = useState({ date: today(), site: "", quantity: 1, content: "", distance: "", note: "" });
+  const [form, setForm] = useState({ date: today(), site: "", quantity: 1, content: "", distance: "", overtime: "", note: "" });
   const [dupError, setDupError] = useState(false);
   const [sending, setSending] = useState(false);
   const set = (k) => (e) => { setForm((p) => ({ ...p, [k]: typeof e === "object" ? e.target.value : e })); setDupError(false); };
@@ -517,7 +519,7 @@ function WorkerView({ onBack, onSubmit, submitted, workerName, sites, onGoAdmin 
       setSending(false);
       return;
     }
-    setForm((p) => ({ ...p, site: "", content: "", distance: "", note: "", quantity: 1 }));
+    setForm((p) => ({ ...p, site: "", content: "", distance: "", overtime: "", note: "", quantity: 1 }));
     setSending(false);
   };
 
@@ -713,6 +715,13 @@ function WorkerView({ onBack, onSubmit, submitted, workerName, sites, onGoAdmin 
                 <span style={{ position: "absolute", right: 16, top: "50%", transform: "translateY(-50%)", color: "#b0b5bd", fontSize: 14 }}>km</span>
               </div>
             </Field>
+            <Field label="残業時間（任意）">
+              <div style={{ position: "relative" }}>
+                <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#b0b5bd", fontSize: 17 }}>⏱</span>
+                <input type="number" inputMode="decimal" step="0.5" min="0" value={form.overtime} onChange={set("overtime")} placeholder="0" style={{ ...inputBase, paddingLeft: 42 }} />
+                <span style={{ position: "absolute", right: 16, top: "50%", transform: "translateY(-50%)", color: "#b0b5bd", fontSize: 14 }}>時間</span>
+              </div>
+            </Field>
           </>
         ) : (
           <>
@@ -730,6 +739,13 @@ function WorkerView({ onBack, onSubmit, submitted, workerName, sites, onGoAdmin 
                 <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#b0b5bd" }}>{Icons.car}</span>
                 <input type="number" value={form.distance} onChange={set("distance")} placeholder="0" style={{ ...inputBase, paddingLeft: 42 }} />
                 <span style={{ position: "absolute", right: 16, top: "50%", transform: "translateY(-50%)", color: "#b0b5bd", fontSize: 14 }}>km</span>
+              </div>
+            </Field>
+            <Field label="残業時間（任意）">
+              <div style={{ position: "relative" }}>
+                <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#b0b5bd", fontSize: 17 }}>⏱</span>
+                <input type="number" inputMode="decimal" step="0.5" min="0" value={form.overtime} onChange={set("overtime")} placeholder="0" style={{ ...inputBase, paddingLeft: 42 }} />
+                <span style={{ position: "absolute", right: 16, top: "50%", transform: "translateY(-50%)", color: "#b0b5bd", fontSize: 14 }}>時間</span>
               </div>
             </Field>
           </>
@@ -803,9 +819,10 @@ function AdminView({ onBack, records, workers, sites, onRefresh, onBulkAdd }) {
     // 夜勤(-6)は1人工としてカウント、打合せ(-5)はカウントしない
     const qty = r.quantity === -6 ? 1 : r.quantity;
     if (qty <= 0) return;
-    if (!workerSummary[r.worker_name]) workerSummary[r.worker_name] = { days: 0, distance: 0, sites: new Set() };
+    if (!workerSummary[r.worker_name]) workerSummary[r.worker_name] = { days: 0, distance: 0, overtime: 0, sites: new Set() };
     workerSummary[r.worker_name].days += qty;
     workerSummary[r.worker_name].distance += Number(r.distance) || 0;
+    workerSummary[r.worker_name].overtime += Number(r.overtime) || 0;
     workerSummary[r.worker_name].sites.add(r.site_name);
   });
 
@@ -828,12 +845,13 @@ function AdminView({ onBack, records, workers, sites, onRefresh, onBulkAdd }) {
     return s + (qty > 0 ? (Number(r.distance) || 0) : 0);
   }, 0) * 10) / 10;
   const workingDays = new Set(filtered.filter(r => r.quantity > 0 || r.quantity === -6).map(r => r.date)).size;
+  const totalOvertime = Math.round(filtered.reduce((s, r) => s + (Number(r.overtime) || 0), 0) * 10) / 10;
 
   const exportCSV = () => {
-    const header = "名前,日付,曜日,現場名,出勤区分,作業内容,車距離(km),備考\n";
+    const header = "名前,日付,曜日,現場名,出勤区分,作業内容,車距離(km),残業(時間),備考\n";
     const qLabel = (q) => q === 1 ? "1日" : q === 0.5 ? "半日" : q === 0 ? "欠勤" : q === -4 ? "予定欠勤" : q === -1 ? "休工(天候)" : q === -3 ? "休工(現場都合)" : q === -2 ? "休日" : q === -5 ? "打合せ" : q === -6 ? "夜勤" : q;
     const rows = filtered.map(r =>
-      `${r.worker_name||""},${r.date},${weekday(r.date)},${r.site_name||""},${qLabel(r.quantity)},${r.content||""},${r.distance||0},${(r.note||"").replace(/,/g, "；")}`
+      `${r.worker_name||""},${r.date},${weekday(r.date)},${r.site_name||""},${qLabel(r.quantity)},${r.content||""},${r.distance||0},${r.overtime||0},${(r.note||"").replace(/,/g, "；")}`
     ).join("\n");
     const blob = new Blob(["\uFEFF" + header + rows], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -875,6 +893,7 @@ function AdminView({ onBack, records, workers, sites, onRefresh, onBulkAdd }) {
         <div className="way-admin-stats way-scroll" style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 2 }}>
           <StatCard label="のべ人工数" value={totalManDays} unit="人工" color={THEME.gold2} large />
           <StatCard label="稼働日数" value={workingDays} unit="日" color={THEME.blue} />
+          <StatCard label="総残業時間" value={totalOvertime} unit="時間" color="#f59e0b" />
           <StatCard label="総走行距離" value={totalDistance} unit="km" color="#b7c6d6" />
         </div>
       </div>
@@ -1209,7 +1228,7 @@ function ListView({ records, sites, onRefresh }) {
 
   const startEdit = (r) => {
     setEditId(r.id);
-    setEditForm({ date: r.date, site_name: r.site_name || r.site, quantity: r.quantity, content: r.content, distance: r.distance || 0, note: r.note || "" });
+    setEditForm({ date: r.date, site_name: r.site_name || r.site, quantity: r.quantity, content: r.content, distance: r.distance || 0, overtime: r.overtime || 0, note: r.note || "" });
   };
   const cancelEdit = () => { setEditId(null); setEditForm({}); };
   const saveEdit = async () => {
@@ -1241,6 +1260,7 @@ function ListView({ records, sites, onRefresh }) {
               <div><label style={{ fontSize: 11, color: THEME.muted, display: "block", marginBottom: 4 }}>現場</label><select value={editForm.site_name} onChange={ef("site_name")} style={{ ...selectBase, display: "block", width: "100%", padding: "9px 10px", fontSize: 14 }}>{(sites||[]).map(s => <option key={s} value={s}>{s}</option>)}</select></div>
               <div><label style={{ fontSize: 11, color: THEME.muted, display: "block", marginBottom: 4 }}>作業内容</label><input type="text" value={editForm.content} onChange={ef("content")} style={{ ...inputBase, display: "block", width: "100%", padding: "9px 10px", fontSize: 14 }} /></div>
               <div><label style={{ fontSize: 11, color: THEME.muted, display: "block", marginBottom: 4 }}>距離(km)</label><input type="number" value={editForm.distance} onChange={ef("distance")} style={{ ...inputBase, display: "block", width: "100%", padding: "9px 10px", fontSize: 16, WebkitAppearance: "none", appearance: "none" }} /></div>
+              <div><label style={{ fontSize: 11, color: THEME.muted, display: "block", marginBottom: 4 }}>残業(h)</label><input type="number" step="0.5" min="0" value={editForm.overtime} onChange={ef("overtime")} style={{ ...inputBase, display: "block", width: "100%", padding: "9px 10px", fontSize: 16, WebkitAppearance: "none", appearance: "none" }} /></div>
               <div><label style={{ fontSize: 11, color: THEME.muted, display: "block", marginBottom: 4 }}>備考</label><input type="text" value={editForm.note} onChange={ef("note")} style={{ ...inputBase, display: "block", width: "100%", padding: "9px 10px", fontSize: 14 }} /></div>
               <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                 <button onClick={cancelEdit} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.05)", color: THEME.textSoft, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>キャンセル</button>
@@ -1276,6 +1296,7 @@ function ListView({ records, sites, onRefresh }) {
                 <span style={{ color: THEME.blue }}>📍 {r.site_name||r.site}</span>
                 <span style={{ color: THEME.textSoft }}>🔧 {r.content}</span>
                 {r.distance > 0 && <span style={{ color: THEME.textSoft }}>🚗 {r.distance}km</span>}
+                {Number(r.overtime) > 0 && <span style={{ color: "#f59e0b", fontWeight: 700 }}>⏱ 残業{r.overtime}h</span>}
                 {r.note && <span style={{ color: THEME.textSoft }}>📝 {r.note}</span>}
               </div>
               {delConfirm === r.id && <div style={{ marginTop: 8, fontSize: 12, color: "#fca5a5", fontWeight: 700 }}>もう一度押すと削除されます</div>}
@@ -1335,6 +1356,7 @@ function SummaryView({ data, records, filterMonth }) {
                 <div style={{ textAlign: "left" }}>
                   <div style={{ color: THEME.text, fontSize: 15, fontWeight: 800 }}>{name}</div>
                   <div style={{ display: "flex", gap: 14, fontSize: 12, color: THEME.muted, marginTop: 3 }}>
+                    <span>残業 <span style={{ color: "#f59e0b", fontWeight: 700 }}>{Math.round((info.overtime || 0) * 10) / 10}h</span></span>
                     <span>走行 <span style={{ color: "#b7c6d6", fontWeight: 700 }}>{Math.round(info.distance * 10) / 10}km</span></span>
                     <span>現場 <span style={{ color: THEME.blue, fontWeight: 700 }}>{info.sites.size}件</span></span>
                   </div>
@@ -1413,7 +1435,7 @@ function InvoiceView({ data, records }) {
                 <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 12 }}>
                   <thead>
                     <tr>
-                      {["日付","名前","出勤区分","作業内容","距離"].map((h) => (
+                      {["日付","名前","出勤区分","作業内容","距離","残業"].map((h) => (
                         <th key={h} style={{ textAlign: "left", padding: "8px", fontSize: 11, fontWeight: 700, color: THEME.muted, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>{h}</th>
                       ))}
                     </tr>
@@ -1426,6 +1448,7 @@ function InvoiceView({ data, records }) {
                         <td style={{ ...tdStyle, color: r.quantity === 1 ? "#10b981" : r.quantity === 0.5 ? "#f59e0b" : r.quantity === -1 ? "#8b5cf6" : r.quantity === -3 ? "#ea8c1c" : r.quantity === -4 ? "#f97316" : r.quantity === -2 ? "#6b7280" : r.quantity === -5 ? "#0ea5e9" : r.quantity === -6 ? "#1e40af" : "#ef4444", fontWeight: 600 }}>{r.quantity === -1 ? "休工(天候)" : r.quantity === -3 ? "休工(現場)" : r.quantity === -2 ? "休日" : r.quantity === -4 ? "予定欠" : r.quantity === -5 ? "打合せ" : r.quantity === -6 ? "夜勤" : r.quantity}</td>
                         <td style={tdStyle}>{r.content}</td>
                         <td style={tdStyle}>{r.distance || "-"}</td>
+                        <td style={{ ...tdStyle, color: Number(r.overtime) > 0 ? "#f59e0b" : THEME.muted, fontWeight: Number(r.overtime) > 0 ? 700 : 400 }}>{Number(r.overtime) > 0 ? `${r.overtime}h` : "-"}</td>
                       </tr>
                     ))}
                   </tbody>
